@@ -20,11 +20,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────────
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 EMAIL_SENDER   = os.getenv("EMAIL_SENDER")    # Gmail address used to SEND
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")  # App password (not regular password)
 EMAIL_TO       = "karthikadiga79@gmail.com"
-TAVILY_API_KEY = os.getenv("fqfu gdqm ttnh fajo")  # free: 1000 searches/month
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")  # free: 1000 searches/month
 
 RESUME_SUMMARY = """
 Name: Karthik S Adiga
@@ -46,14 +46,43 @@ Target Roles: Software Engineer (Fresher), Full Stack Developer,
 
 # Tavily searches all these sources automatically — no need to specify each one
 TARGET_QUERIES = [
-    "Software Engineer fresher jobs India 2025 apply LinkedIn Naukri",
-    "Full Stack Developer entry level jobs India fresher Wellfound Instahyre",
-    "Backend Developer fresher jobs Bangalore India 2025",
-    "C++ Developer fresher jobs India 0 years experience",
-    "Junior Software Developer fresher jobs India remote hybrid 2025",
+    "Software Engineer fresher jobs India posted this week 2026",
+    "Full Stack Developer entry level jobs India new openings 2026",
+    "Backend Developer fresher jobs Bangalore India new 2026",
+    "C++ Developer fresher 0 years experience jobs India 2026",
+    "Junior Software Developer fresher remote hybrid India apply now 2026",
 ]
 
 # ─── STEP 1: SEARCH FOR JOBS USING TAVILY ───────────────────────────────────
+def is_recent(snippet: str) -> bool:
+    """
+    Filter out stale listings by checking for old date markers in the snippet.
+    Keeps results that look recent or have no date at all.
+    """
+    import re
+    today = datetime.date.today()
+    current_year = today.year   # 2026
+
+    # Reject if snippet contains an old year
+    old_years = [str(y) for y in range(2020, current_year)]
+    for yr in old_years:
+        if re.search(rf'\b{yr}\b', snippet):
+            return False
+
+    # Reject known stale month patterns like "December 2025", "November 2025"
+    stale_months = [
+        "january 2025", "february 2025", "march 2025", "april 2025",
+        "may 2025", "june 2025", "july 2025", "august 2025",
+        "september 2025", "october 2025", "november 2025", "december 2025",
+    ]
+    snippet_lower = snippet.lower()
+    for pattern in stale_months:
+        if pattern in snippet_lower:
+            return False
+
+    return True
+
+
 def search_jobs_tavily(query: str) -> list[dict]:
     """Use Tavily AI Search — built for agents, returns clean structured results."""
     if not TAVILY_API_KEY:
@@ -62,27 +91,41 @@ def search_jobs_tavily(query: str) -> list[dict]:
 
     try:
         client = TavilyClient(api_key=TAVILY_API_KEY)
-        # search_depth="advanced" gives richer snippets; max_results=7 keeps usage low
         response = client.search(
             query=query,
             search_depth="advanced",
-            max_results=7,
+            max_results=10,
             include_domains=[
                 "linkedin.com", "naukri.com", "wellfound.com",
                 "instahyre.com", "cutshort.io", "hirist.tech",
                 "foundit.in", "indeed.com", "internshala.com"
             ],
-            days=7    # only results from the last 7 days
+            days=3    # last 3 days only — stricter than 7
         )
 
         results = []
         for item in response.get("results", []):
+            snippet = item.get("content", "")
+            title   = item.get("title", "")
+
+            # Skip aggregated "X jobs in India" listing pages — not individual postings
+            if any(skip in title.lower() for skip in [
+                "jobs in india", "jobs in bangalore", "jobs in mumbai",
+                "search results", "job search", "find jobs"
+            ]):
+                continue
+
+            # Skip if snippet looks stale
+            if not is_recent(snippet + " " + title):
+                continue
+
             results.append({
-                "title":   item.get("title", ""),
+                "title":   title,
                 "link":    item.get("url", ""),
-                "snippet": item.get("content", ""),
+                "snippet": snippet,
                 "source":  item.get("url", "").split("/")[2] if item.get("url") else ""
             })
+
         return results
 
     except Exception as e:
@@ -112,14 +155,15 @@ def fetch_all_jobs() -> list[dict]:
     return all_jobs
 
 
-# ─── STEP 2: GEMINI AI – SCORE & ANALYSE ────────────────────────────────────
-def gemini_analyze(jobs: list[dict]) -> str:
+# ─── STEP 2: GROQ AI – SCORE & ANALYSE ─────────────────────────────────────
+def groq_analyze(jobs: list[dict]) -> str:
     """
-    Send all jobs + resume to Gemini.
+    Send all jobs + resume to Groq (llama-3.3-70b).
     Returns a structured HTML email body.
+    Free tier: 14,400 requests/day — more than enough!
     """
-    if not GEMINI_API_KEY:
-        raise ValueError("GEMINI_API_KEY not set in .env")
+    if not GROQ_API_KEY:
+        raise ValueError("GROQ_API_KEY not set in .env")
 
     jobs_text = ""
     for i, job in enumerate(jobs[:20], 1):   # cap at 20 to save tokens
@@ -162,33 +206,36 @@ Use this structure:
 - Resume Quick Wins section
 - Keep it professional, mobile-friendly, dark-accent color scheme
 
-Important: Karthik is a FRESHER (0 years experience). Only include roles suitable for freshers or 0-2 year experience.
+Important rules:
+- Karthik is a FRESHER (0 years experience). Only include roles for freshers or 0-2 years exp.
+- REJECT any job that mentions 2025 or earlier dates — only accept 2026 postings.
+- REJECT aggregator pages like "335 jobs in India" — only real individual job postings.
+- If a job has no clear date, include it but mark date as "Unknown".
 Today's date: {datetime.date.today().strftime('%B %d, %Y')}
 """
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.3,
-            "maxOutputTokens": 4096
-        }
+        "model": "llama-3.3-70b-versatile",   # fast, free, very capable
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3,
+        "max_tokens": 4096
     }
 
-    resp = requests.post(url, json=payload, timeout=60)
+    resp = requests.post(url, headers=headers, json=payload, timeout=60)
     resp.raise_for_status()
     data = resp.json()
-    
-    candidates = data.get("candidates", [])
-    if not candidates:
-        raise ValueError(f"Gemini returned no candidates: {data}")
-    
-    text = candidates[0]["content"]["parts"][0]["text"]
-    
-    # Strip markdown code fences if Gemini wraps in ```html
+
+    text = data["choices"][0]["message"]["content"]
+
+    # Strip markdown code fences if model wraps in ```html
     text = re.sub(r"^```html\s*", "", text.strip())
     text = re.sub(r"```$", "", text.strip())
-    
+
     return text
 
 
@@ -275,7 +322,7 @@ def run_daily_job():
         return
 
     print(f"\n[2/3] Analysing {len(jobs)} jobs with Gemini AI...")
-    html_body = gemini_analyze(jobs)
+    html_body = groq_analyze(jobs)
 
     print("\n[3/3] Sending email...")
     send_email(html_body, len(jobs))

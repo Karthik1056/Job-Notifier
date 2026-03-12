@@ -12,7 +12,7 @@ load_dotenv()
 
 def check_env():
     print("\n── 1. Checking environment variables ──")
-    required = ["GEMINI_API_KEY", "EMAIL_SENDER", "EMAIL_PASSWORD", "TAVILY_API_KEY"]
+    required = ["GROQ_API_KEY", "EMAIL_SENDER", "EMAIL_PASSWORD", "TAVILY_API_KEY"]
     
     ok = True
     for key in required:
@@ -26,20 +26,28 @@ def check_env():
     return ok
 
 
-def test_gemini():
-    print("\n── 2. Testing Gemini API ──")
+def test_groq():
+    print("\n── 2. Testing Groq API ──")
     import requests
-    key = os.getenv("GEMINI_API_KEY")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={key}"
-    payload = {"contents": [{"parts": [{"text": "Say: Gemini is working!"}]}]}
+    key = os.getenv("GROQ_API_KEY")
+    if not key or "your_" in key:
+        print("  ❌ GROQ_API_KEY not set")
+        return False
     try:
-        r = requests.post(url, json=payload, timeout=15)
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [{"role": "user", "content": "Say: Groq is working!"}],
+            "max_tokens": 20
+        }
+        r = requests.post(url, headers=headers, json=payload, timeout=15)
         r.raise_for_status()
-        text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-        print(f"  ✅ Gemini responded: {text.strip()[:60]}")
+        text = r.json()["choices"][0]["message"]["content"]
+        print(f"  ✅ Groq responded: {text.strip()[:60]}")
         return True
     except Exception as e:
-        print(f"  ❌ Gemini failed: {e}")
+        print(f"  ❌ Groq failed: {e}")
         return False
 
 
@@ -106,12 +114,12 @@ if __name__ == "__main__":
         print("\n❌ Fix .env file first, then re-run this test.")
         sys.exit(1)
     
-    gemini_ok  = test_gemini()
+    groq_ok    = test_groq()
     tavily_ok  = test_tavily()
     email_ok   = test_email()
     
     print("\n" + "=" * 50)
-    if all([env_ok, gemini_ok, tavily_ok, email_ok]):
+    if all([env_ok, groq_ok, tavily_ok, email_ok]):
         print("✅ ALL TESTS PASSED — Run: python job_notifier.py")
     else:
         print("⚠️  Some tests failed. Fix issues above, then retry.")
