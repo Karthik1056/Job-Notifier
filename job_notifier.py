@@ -298,7 +298,10 @@ def send_email(html_body: str, job_count: int):
     msg.attach(MIMEText(full_html, "html"))
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        # Changed to Port 587 and standard SMTP (not SMTP_SSL)
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.ehlo()          # Identify ourselves to the server
+            server.starttls()      # Upgrade the connection to secure TLS
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_TO, msg.as_string())
         print(f"[OK] Email sent to {EMAIL_TO}")
