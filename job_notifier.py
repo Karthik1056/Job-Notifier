@@ -353,5 +353,26 @@ def main():
         time.sleep(30)
 
 
+from flask import Flask, jsonify
+import threading
+
+# ─── FLASK WEB SERVER ──────────────────────────────────────────────
+app = Flask(__name__)
+
+@app.route("/")
+def index():
+    return "<h2>Job Notifier is running!</h2><p>Visit <a href='/run'>/run</a> to trigger the job manually.</p>", 200
+
+@app.route("/run")
+def run_job_now():
+    threading.Thread(target=run_daily_job).start()
+    return jsonify({"status": "Job triggered! Check your email soon."}), 200
+
+# ─── ENTRYPOINT ────────────────────────────────────────────────────
 if __name__ == "__main__":
-    main()
+    # Start the scheduler in a background thread
+    scheduler_thread = threading.Thread(target=main, daemon=True)
+    scheduler_thread.start()
+    # Start Flask app (Render/Heroku will set PORT env var)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
